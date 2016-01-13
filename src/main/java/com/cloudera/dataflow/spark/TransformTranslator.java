@@ -71,6 +71,7 @@ import static com.cloudera.dataflow.spark.ShardNameBuilder.getOutputDirectory;
 import static com.cloudera.dataflow.spark.ShardNameBuilder.getOutputFilePrefix;
 import static com.cloudera.dataflow.spark.ShardNameBuilder.getOutputFileTemplate;
 import static com.cloudera.dataflow.spark.ShardNameBuilder.replaceShardCount;
+import static com.cloudera.dataflow.spark.TransformEvaluatorRegistry.convert;
 
 import com.cloudera.dataflow.hadoop.HadoopIO;
 
@@ -445,10 +446,10 @@ public final class TransformTranslator {
   }
 
 
-  private static <T> TransformEvaluator<TextIO.Read.Bound<T>> readText() {
-    return new TransformEvaluator<TextIO.Read.Bound<T>>() {
+  private static <T, PT extends TextIO.Read.Bound<T>> TransformEvaluator<PT> readText() {
+    return new TransformEvaluator<PT>() {
       @Override
-      public void evaluate(TextIO.Read.Bound<T> transform, EvaluationContext context) {
+      public void evaluate(PT transform, EvaluationContext context) {
         String pattern = transform.getFilepattern();
         JavaRDD<WindowedValue<String>> rdd = context.getSparkContext().textFile(pattern)
                 .map(WindowingHelpers.<String>windowFunction());
@@ -457,10 +458,10 @@ public final class TransformTranslator {
     };
   }
 
-  private static <T> TransformEvaluator<TextIO.Write.Bound<T>> writeText() {
-    return new TransformEvaluator<TextIO.Write.Bound<T>>() {
+  private static <T, PT extends TextIO.Write.Bound<T>> TransformEvaluator<PT> writeText() {
+    return new TransformEvaluator<PT>() {
       @Override
-      public void evaluate(TextIO.Write.Bound<T> transform, EvaluationContext context) {
+      public void evaluate(PT transform, EvaluationContext context) {
         @SuppressWarnings("unchecked")
         JavaPairRDD<T, Void> last =
             ((JavaRDDLike<WindowedValue<T>, ?>) context.getInputRDD(transform))
@@ -747,42 +748,37 @@ public final class TransformTranslator {
     }
   }
 
-  private static final Map<Class<? extends PTransform>, TransformEvaluator<?>> EVALUATORS = Maps
-      .newHashMap();
+  private static final TransformEvaluatorRegistry REGISTRY = new TransformEvaluatorRegistry();
 
   static {
-    EVALUATORS.put(TextIO.Read.Bound.class, readText());
-    EVALUATORS.put(TextIO.Write.Bound.class, writeText());
-    EVALUATORS.put(AvroIO.Read.Bound.class, readAvro());
-    EVALUATORS.put(AvroIO.Write.Bound.class, writeAvro());
-    EVALUATORS.put(HadoopIO.Read.Bound.class, readHadoop());
-    EVALUATORS.put(HadoopIO.Write.Bound.class, writeHadoop());
-    EVALUATORS.put(ParDo.Bound.class, parDo());
-    EVALUATORS.put(ParDo.BoundMulti.class, multiDo());
-    EVALUATORS.put(GroupByKey.GroupByKeyOnly.class, gbk());
-    EVALUATORS.put(Combine.GroupedValues.class, grouped());
-    EVALUATORS.put(Combine.Globally.class, combineGlobally());
-    EVALUATORS.put(Combine.PerKey.class, combinePerKey());
-    EVALUATORS.put(Flatten.FlattenPCollectionList.class, flattenPColl());
-    EVALUATORS.put(Create.Values.class, create());
-    EVALUATORS.put(View.AsSingleton.class, viewAsSingleton());
-    EVALUATORS.put(View.AsIterable.class, viewAsIter());
-    EVALUATORS.put(View.CreatePCollectionView.class, createPCollView());
-    EVALUATORS.put(Window.Bound.class, window());
+    // These have been rewritten for the register class.
+    REGISTRY.registerTransformEvaluator(TextIO.Read.Bound.class, readText());
+    REGISTRY.registerTransformEvaluator(TextIO.Write.Bound.class, writeText());
+    // These have not.
+    REGISTRY.registerTransformEvaluator(AvroIO.Read.Bound.class, convert(readAvro()));
+    REGISTRY.registerTransformEvaluator(AvroIO.Write.Bound.class, convert(writeAvro()));
+    REGISTRY.registerTransformEvaluator(HadoopIO.Read.Bound.class, convert(readHadoop()));
+    REGISTRY.registerTransformEvaluator(HadoopIO.Write.Bound.class, convert(writeHadoop()));
+    REGISTRY.registerTransformEvaluator(ParDo.Bound.class, convert(parDo()));
+    REGISTRY.registerTransformEvaluator(ParDo.BoundMulti.class, convert(multiDo()));
+    REGISTRY.registerTransformEvaluator(GroupByKey.GroupByKeyOnly.class, convert(gbk()));
+    REGISTRY.registerTransformEvaluator(Combine.GroupedValues.class, convert(grouped()));
+    REGISTRY.registerTransformEvaluator(Combine.Globally.class, convert(combineGlobally()));
+    REGISTRY.registerTransformEvaluator(Combine.PerKey.class, convert(combinePerKey()));
+    REGISTRY.registerTransformEvaluator(Flatten.FlattenPCollectionList.class,
+        convert(flattenPColl()));
+    REGISTRY.registerTransformEvaluator(Create.Values.class, convert(create()));
+    REGISTRY.registerTransformEvaluator(View.AsSingleton.class, convert(viewAsSingleton()));
+    REGISTRY.registerTransformEvaluator(View.AsIterable.class, convert(viewAsIter()));
+    REGISTRY.registerTransformEvaluator(View.CreatePCollectionView.class,
+        convert(createPCollView()));
+    REGISTRY.registerTransformEvaluator(Window.Bound.class, convert(window()));
   }
 
-  public static <PT extends PTransform<?, ?>> boolean hasTransformEvaluator(Class<PT> clazz) {
-    return EVALUATORS.containsKey(clazz);
-  }
-
-  public static <PT extends PTransform<?, ?>> TransformEvaluator<PT>
-  getTransformEvaluator(Class<PT> clazz) {
-    @SuppressWarnings("unchecked")
-    TransformEvaluator<PT> transform = (TransformEvaluator<PT>) EVALUATORS.get(clazz);
-    if (transform == null) {
-      throw new IllegalStateException("No TransformEvaluator registered for " + clazz);
-    }
-    return transform;
+  public static <PT extends PTransform<?, ?>> void registerTransformEvaluator(
+      Class<PT> transformClass,
+      TransformEvaluator<PT> transformEvaluator) {
+    REGISTRY.registerTransformEvaluator(transformClass, transformEvaluator);
   }
 
   /**
@@ -792,13 +788,13 @@ public final class TransformTranslator {
 
     @Override
     public boolean hasTranslation(Class<? extends PTransform<?, ?>> clazz) {
-      return hasTransformEvaluator(clazz);
+      return REGISTRY.hasTransformEvaluator(clazz);
     }
 
     @Override
     public TransformEvaluator<? extends PTransform<?, ?>> translate(
         Class<? extends PTransform<?, ?>> clazz) {
-      return getTransformEvaluator(clazz);
+      return REGISTRY.getTransformEvaluator(clazz);
     }
   }
 }

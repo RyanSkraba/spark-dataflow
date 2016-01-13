@@ -14,13 +14,14 @@
  */
 package com.cloudera.dataflow.spark.streaming;
 
+import static com.cloudera.dataflow.spark.TransformEvaluatorRegistry.convert;
+
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 
-import com.google.api.client.util.Maps;
 import com.google.api.client.util.Sets;
 import com.google.cloud.dataflow.sdk.coders.Coder;
 import com.google.cloud.dataflow.sdk.coders.VoidCoder;
@@ -64,6 +65,7 @@ import com.cloudera.dataflow.spark.DoFnFunction;
 import com.cloudera.dataflow.spark.EvaluationContext;
 import com.cloudera.dataflow.spark.SparkPipelineTranslator;
 import com.cloudera.dataflow.spark.TransformEvaluator;
+import com.cloudera.dataflow.spark.TransformEvaluatorRegistry;
 import com.cloudera.dataflow.spark.TransformTranslator;
 import com.cloudera.dataflow.spark.WindowingHelpers;
 
@@ -324,15 +326,15 @@ public final class StreamingTransformTranslator {
     };
   }
 
-  private static final Map<Class<? extends PTransform>, TransformEvaluator<?>> EVALUATORS = Maps
-      .newHashMap();
+  private static final TransformEvaluatorRegistry REGISTRY = new TransformEvaluatorRegistry();
 
   static {
-    EVALUATORS.put(ConsoleIO.Write.Unbound.class, print());
-    EVALUATORS.put(CreateStream.QueuedValues.class, createFromQueue());
-    EVALUATORS.put(Create.Values.class, create());
-    EVALUATORS.put(KafkaIO.Read.Unbound.class, kafka());
-    EVALUATORS.put(Window.Bound.class, window());
+    REGISTRY.registerTransformEvaluator(ConsoleIO.Write.Unbound.class, convert(print()));
+    REGISTRY.registerTransformEvaluator(CreateStream.QueuedValues.class,
+        convert(createFromQueue()));
+    REGISTRY.registerTransformEvaluator(Create.Values.class, convert(create()));
+    REGISTRY.registerTransformEvaluator(KafkaIO.Read.Unbound.class, convert(kafka()));
+    REGISTRY.registerTransformEvaluator(Window.Bound.class, convert(window()));
   }
 
   private static final Set<Class<? extends PTransform>> UNSUPPORTTED_EVALUATORS = Sets
@@ -349,14 +351,10 @@ public final class StreamingTransformTranslator {
     UNSUPPORTTED_EVALUATORS.add(Flatten.FlattenPCollectionList.class);
   }
 
-  private static <PT extends PTransform<?, ?>> boolean hasTransformEvaluator(Class<PT> clazz) {
-    return EVALUATORS.containsKey(clazz);
-  }
-
-  @SuppressWarnings("unchecked")
   private static <PT extends PTransform<?, ?>> TransformEvaluator<PT>
       getTransformEvaluator(Class<PT> clazz, SparkPipelineTranslator rddTranslator) {
-    TransformEvaluator<PT> transform = (TransformEvaluator<PT>) EVALUATORS.get(clazz);
+    TransformEvaluator<PT> transform = (TransformEvaluator<PT>)
+        REGISTRY.getTransformEvaluator(clazz);
     if (transform == null) {
       if (UNSUPPORTTED_EVALUATORS.contains(clazz)) {
         throw new UnsupportedOperationException("Dataflow transformation " + clazz
@@ -365,7 +363,7 @@ public final class StreamingTransformTranslator {
       }
       // DStream transformations will transform an RDD into another RDD
       // Actions will create output
-      // In Dataflow it depends on the PTranform's Input and Output class
+      // In Dataflow it depends on the PTransform's Input and Output class
       Class pTOutputClazz = getPTransformOutputClazz(clazz);
       if (pTOutputClazz == PDone.class) {
         return foreachRDD(rddTranslator);
@@ -397,7 +395,7 @@ public final class StreamingTransformTranslator {
     @Override
     public boolean hasTranslation(Class<? extends PTransform<?, ?>> clazz) {
       // streaming includes rdd transformations as well
-      return hasTransformEvaluator(clazz) || rddTranslator.hasTranslation(clazz);
+      return REGISTRY.hasTransformEvaluator(clazz) || rddTranslator.hasTranslation(clazz);
     }
 
     @Override
