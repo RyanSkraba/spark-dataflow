@@ -15,6 +15,12 @@
 
 package com.cloudera.dataflow.spark;
 
+import static com.cloudera.dataflow.spark.ShardNameBuilder.getOutputDirectory;
+import static com.cloudera.dataflow.spark.ShardNameBuilder.getOutputFilePrefix;
+import static com.cloudera.dataflow.spark.ShardNameBuilder.getOutputFileTemplate;
+import static com.cloudera.dataflow.spark.ShardNameBuilder.replaceShardCount;
+import static com.cloudera.dataflow.spark.TransformEvaluatorRegistry.convert;
+
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.Arrays;
@@ -49,7 +55,6 @@ import com.google.cloud.dataflow.sdk.values.PCollectionTuple;
 import com.google.cloud.dataflow.sdk.values.PCollectionView;
 import com.google.cloud.dataflow.sdk.values.TupleTag;
 import com.google.common.collect.ImmutableMap;
-
 import org.apache.avro.mapred.AvroKey;
 import org.apache.avro.mapreduce.AvroJob;
 import org.apache.avro.mapreduce.AvroKeyInputFormat;
@@ -66,12 +71,6 @@ import org.apache.spark.api.java.function.Function;
 import org.apache.spark.api.java.function.Function2;
 import org.apache.spark.api.java.function.PairFunction;
 import scala.Tuple2;
-
-import static com.cloudera.dataflow.spark.ShardNameBuilder.getOutputDirectory;
-import static com.cloudera.dataflow.spark.ShardNameBuilder.getOutputFilePrefix;
-import static com.cloudera.dataflow.spark.ShardNameBuilder.getOutputFileTemplate;
-import static com.cloudera.dataflow.spark.ShardNameBuilder.replaceShardCount;
-import static com.cloudera.dataflow.spark.TransformEvaluatorRegistry.convert;
 
 import com.cloudera.dataflow.hadoop.HadoopIO;
 
@@ -446,10 +445,10 @@ public final class TransformTranslator {
   }
 
 
-  private static <T, PT extends TextIO.Read.Bound<T>> TransformEvaluator<PT> readText() {
-    return new TransformEvaluator<PT>() {
+  private static <T> TransformEvaluator<TextIO.Read.Bound<T>> readText() {
+    return new TransformEvaluator<TextIO.Read.Bound<T>>() {
       @Override
-      public void evaluate(PT transform, EvaluationContext context) {
+      public void evaluate(TextIO.Read.Bound<T> transform, EvaluationContext context) {
         String pattern = transform.getFilepattern();
         JavaRDD<WindowedValue<String>> rdd = context.getSparkContext().textFile(pattern)
                 .map(WindowingHelpers.<String>windowFunction());
@@ -458,10 +457,10 @@ public final class TransformTranslator {
     };
   }
 
-  private static <T, PT extends TextIO.Write.Bound<T>> TransformEvaluator<PT> writeText() {
-    return new TransformEvaluator<PT>() {
+  private static <T> TransformEvaluator<TextIO.Write.Bound<T>> writeText() {
+    return new TransformEvaluator<TextIO.Write.Bound<T>>() {
       @Override
-      public void evaluate(PT transform, EvaluationContext context) {
+      public void evaluate(TextIO.Write.Bound<T> transform, EvaluationContext context) {
         @SuppressWarnings("unchecked")
         JavaPairRDD<T, Void> last =
             ((JavaRDDLike<WindowedValue<T>, ?>) context.getInputRDD(transform))
@@ -751,28 +750,44 @@ public final class TransformTranslator {
   private static final TransformEvaluatorRegistry REGISTRY = new TransformEvaluatorRegistry();
 
   static {
-    // These have been rewritten for the register class.
-    REGISTRY.registerTransformEvaluator(TextIO.Read.Bound.class, readText());
-    REGISTRY.registerTransformEvaluator(TextIO.Write.Bound.class, writeText());
-    // These have not.
-    REGISTRY.registerTransformEvaluator(AvroIO.Read.Bound.class, convert(readAvro()));
-    REGISTRY.registerTransformEvaluator(AvroIO.Write.Bound.class, convert(writeAvro()));
-    REGISTRY.registerTransformEvaluator(HadoopIO.Read.Bound.class, convert(readHadoop()));
-    REGISTRY.registerTransformEvaluator(HadoopIO.Write.Bound.class, convert(writeHadoop()));
-    REGISTRY.registerTransformEvaluator(ParDo.Bound.class, convert(parDo()));
-    REGISTRY.registerTransformEvaluator(ParDo.BoundMulti.class, convert(multiDo()));
-    REGISTRY.registerTransformEvaluator(GroupByKey.GroupByKeyOnly.class, convert(gbk()));
-    REGISTRY.registerTransformEvaluator(Combine.GroupedValues.class, convert(grouped()));
-    REGISTRY.registerTransformEvaluator(Combine.Globally.class, convert(combineGlobally()));
-    REGISTRY.registerTransformEvaluator(Combine.PerKey.class, convert(combinePerKey()));
+    // TODO: These should be rewritten and moved for readability.  For the moment, they are
+    // minimally changed from the cloudera original.
+    REGISTRY.registerTransformEvaluator(TextIO.Read.Bound.class,
+        (TransformEvaluator<TextIO.Read.Bound>) convert(readText()));
+    REGISTRY.registerTransformEvaluator(TextIO.Write.Bound.class,
+        (TransformEvaluator<TextIO.Write.Bound>) convert(writeText()));
+    REGISTRY.registerTransformEvaluator(AvroIO.Read.Bound.class,
+        (TransformEvaluator<AvroIO.Read.Bound>) convert(readAvro()));
+    REGISTRY.registerTransformEvaluator(AvroIO.Write.Bound.class,
+        (TransformEvaluator<AvroIO.Write.Bound>) convert(writeAvro()));
+    REGISTRY.registerTransformEvaluator(HadoopIO.Read.Bound.class,
+        (TransformEvaluator<HadoopIO.Read.Bound>) convert(readHadoop()));
+    REGISTRY.registerTransformEvaluator(HadoopIO.Write.Bound.class,
+        (TransformEvaluator<HadoopIO.Write.Bound>) convert(writeHadoop()));
+    REGISTRY.registerTransformEvaluator(ParDo.Bound.class,
+        (TransformEvaluator<ParDo.Bound>) convert(parDo()));
+    REGISTRY.registerTransformEvaluator(ParDo.BoundMulti.class,
+        (TransformEvaluator<ParDo.BoundMulti>) convert(multiDo()));
+    REGISTRY.registerTransformEvaluator(GroupByKey.GroupByKeyOnly.class,
+        (TransformEvaluator<GroupByKey.GroupByKeyOnly>) convert(gbk()));
+    REGISTRY.registerTransformEvaluator(Combine.GroupedValues.class,
+        (TransformEvaluator<Combine.GroupedValues>) convert(grouped()));
+    REGISTRY.registerTransformEvaluator(Combine.Globally.class,
+        (TransformEvaluator<Combine.Globally>) convert(combineGlobally()));
+    REGISTRY.registerTransformEvaluator(Combine.PerKey.class,
+        (TransformEvaluator<Combine.PerKey>) convert(combinePerKey()));
     REGISTRY.registerTransformEvaluator(Flatten.FlattenPCollectionList.class,
-        convert(flattenPColl()));
-    REGISTRY.registerTransformEvaluator(Create.Values.class, convert(create()));
-    REGISTRY.registerTransformEvaluator(View.AsSingleton.class, convert(viewAsSingleton()));
-    REGISTRY.registerTransformEvaluator(View.AsIterable.class, convert(viewAsIter()));
+        (TransformEvaluator<Flatten.FlattenPCollectionList>) convert(combinePerKey()));
+    REGISTRY.registerTransformEvaluator(Create.Values.class,
+        (TransformEvaluator<Create.Values>) convert(create()));
+    REGISTRY.registerTransformEvaluator(View.AsSingleton.class,
+        (TransformEvaluator<View.AsSingleton>) convert(viewAsSingleton()));
+    REGISTRY.registerTransformEvaluator(View.AsIterable.class,
+        (TransformEvaluator<View.AsIterable>) convert(viewAsIter()));
     REGISTRY.registerTransformEvaluator(View.CreatePCollectionView.class,
-        convert(createPCollView()));
-    REGISTRY.registerTransformEvaluator(Window.Bound.class, convert(window()));
+        (TransformEvaluator<View.CreatePCollectionView>) convert(createPCollView()));
+    REGISTRY.registerTransformEvaluator(Window.Bound.class,
+        (TransformEvaluator<Window.Bound>) convert(window()));
   }
 
   public static <PT extends PTransform<?, ?>> void registerTransformEvaluator(

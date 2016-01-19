@@ -109,6 +109,17 @@ public final class SparkPipelineRunner extends PipelineRunner<EvaluationResult> 
     mOptions = options;
   }
 
+  /**
+   * Registers the transform evaluator for re-use in the Spark pipeline.
+   *
+   * @param <PT> The specific type of PTransform to evaluate.
+   * @param transformClass The class of the PTransform to evaluate.
+   * @param transformEvaluator The callback to implement the transformation.
+   */
+  public static <PT extends PTransform<?, ?>> void registerTransformEvaluator(
+      Class<PT> transformClass, TransformEvaluator<PT> transformEvaluator) {
+    TransformTranslator.registerTransformEvaluator(transformClass, transformEvaluator);
+  }
 
   @Override
   public EvaluationResult run(Pipeline pipeline) {

@@ -329,12 +329,16 @@ public final class StreamingTransformTranslator {
   private static final TransformEvaluatorRegistry REGISTRY = new TransformEvaluatorRegistry();
 
   static {
-    REGISTRY.registerTransformEvaluator(ConsoleIO.Write.Unbound.class, convert(print()));
+    REGISTRY.registerTransformEvaluator(ConsoleIO.Write.Unbound.class,
+        (TransformEvaluator<ConsoleIO.Write.Unbound>) convert(print()));
     REGISTRY.registerTransformEvaluator(CreateStream.QueuedValues.class,
-        convert(createFromQueue()));
-    REGISTRY.registerTransformEvaluator(Create.Values.class, convert(create()));
-    REGISTRY.registerTransformEvaluator(KafkaIO.Read.Unbound.class, convert(kafka()));
-    REGISTRY.registerTransformEvaluator(Window.Bound.class, convert(window()));
+        (TransformEvaluator<CreateStream.QueuedValues>) convert(createFromQueue()));
+    REGISTRY.registerTransformEvaluator(Create.Values.class,
+        (TransformEvaluator<Create.Values>) convert(create()));
+    REGISTRY.registerTransformEvaluator(KafkaIO.Read.Unbound.class,
+        (TransformEvaluator<KafkaIO.Read.Unbound>) convert(kafka()));
+    REGISTRY.registerTransformEvaluator(Window.Bound.class,
+        (TransformEvaluator<Window.Bound>) convert(window()));
   }
 
   private static final Set<Class<? extends PTransform>> UNSUPPORTTED_EVALUATORS = Sets
